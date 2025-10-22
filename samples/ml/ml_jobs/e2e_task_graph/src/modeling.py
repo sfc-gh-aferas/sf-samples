@@ -79,8 +79,8 @@ def ensure_environment(session: Session):
     _try_run_query(session, f"CREATE STAGE IF NOT EXISTS {JOB_STAGE.lstrip('@')}")
 
     # Register local modules for inclusion in ML Job payloads
-    cp.register_pickle_by_value(ops)
-    cp.register_pickle_by_value(data)
+    #cp.register_pickle_by_value(ops)
+    #cp.register_pickle_by_value(data)
 
 
 def prepare_datasets(

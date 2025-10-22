@@ -2,6 +2,8 @@ import io
 import json
 import os
 import time
+import shutil
+from pathlib import Path
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -18,11 +20,17 @@ from snowflake.snowpark import Session
 import cli_utils
 import data
 import modeling
-from constants import (DAG_STAGE, DATA_TABLE_NAME, DB_NAME, SCHEMA_NAME,
+from constants import (DAG_STAGE, CODE_STAGE, DATA_TABLE_NAME, DB_NAME, SCHEMA_NAME,
                        WAREHOUSE)
 
 ARTIFACT_DIR = "run_artifacts"
 
+
+def _stage_directory(session: Session):
+    zipfile = shutil.make_archive("directory",'zip',Path(__file__).parent)
+    result = session.file.put(zipfile,CODE_STAGE,overwrite=True)
+    os.remove(zipfile)
+    return CODE_STAGE+"/"+result[0].target
 
 def _ensure_environment(session: Session):
     """
@@ -41,7 +49,8 @@ def _ensure_environment(session: Session):
     _ = data.get_raw_data(session, DATA_TABLE_NAME, create_if_not_exists=True)
 
     # Register local modules for inclusion in ML Job payloads
-    cp.register_pickle_by_value(modeling)
+    #cp.register_pickle_by_value(modeling)
+
 
 
 def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
@@ -318,7 +327,7 @@ def cleanup(session: Session) -> None:
     modeling.clean_up(session, config.dataset_name, config.model_name)
 
 
-def create_dag(name: str, schedule: Optional[timedelta] = None, **config: Any) -> DAG:
+def create_dag(name: str, schedule: Optional[timedelta] = None, imports: Optional[list] = [], **config: Any) -> DAG:
     """
     Create a DAG for the machine learning model training workflow.
 
@@ -341,7 +350,8 @@ def create_dag(name: str, schedule: Optional[timedelta] = None, **config: Any) -
         schedule=schedule,
         use_func_return_value=True,
         stage_location=DAG_STAGE,
-        packages=["snowflake-snowpark-python", "snowflake-ml-python<1.9.0", "xgboost"],  # NOTE: Temporarily pinning to <1.9.0 due to compatibility issues
+        packages=["snowflake-snowpark-python", "snowflake-ml-python", "xgboost"],  # NOTE: Temporarily pinning to <1.9.0 due to compatibility issues
+        imports=imports,
         config={
             "dataset_name": "mortgage_dataset",
             "model_name": "mortgage_model",
@@ -409,13 +419,14 @@ if __name__ == "__main__":
         session_builder = session_builder.config("connection_name", args.connection)
     session = session_builder.getOrCreate()
     _ensure_environment(session)
+    filename = _stage_directory(session)
 
     api_root = Root(session)
     db = api_root.databases[DB_NAME]
     schema = db.schemas[SCHEMA_NAME]
 
     dag_op = DAGOperation(schema)
-    dag = create_dag(name="dag", schedule=args.schedule)
+    dag = create_dag(name="dag", schedule=args.schedule, imports=[filename])
     dag_op.deploy(dag, mode=CreateMode.or_replace)
 
     if args.run_dag:
